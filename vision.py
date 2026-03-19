@@ -14,31 +14,60 @@ class VisionSystem:
         
     def detect_markers(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejected = self.detector.detectMarkers(gray)
         
+        contrast_imgs = [("Base Grayscale", gray)]
+        # Alpha-Beta Sweeps
+        for alpha in [1.2, 1.5, 2.0, 3.0]:
+            for beta in [0, 10, 30, 50, -20]:
+                contrast_imgs.append((f"Abs a:{alpha} b:{beta}", cv2.convertScaleAbs(gray, alpha=alpha, beta=beta)))
+                
+        # CLAHE Sweeps
+        for cl in [2.0, 4.0, 6.0]:
+            for ts in [4, 8, 16]:
+                contrast_imgs.append((f"CLAHE {cl} {ts}", cv2.createCLAHE(clipLimit=cl, tileGridSize=(ts,ts)).apply(gray)))
+                
+        # Gamma sweeps
+        for gamma in [0.7, 1.5, 2.0]:
+            invGamma = 1.0 / gamma
+            table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+            contrast_imgs.append((f"Gamma {gamma}", cv2.LUT(gray, table)))
+
+        all_found_ids_list = []
+        all_corners = []
+        
+        # Ensure perimeter threshold is safe to prevent noise
+        self.parameters.minMarkerPerimeterRate = 0.03
+        
+        for c_name, c_img in contrast_imgs:
+            corners, ids, rejected = self.detector.detectMarkers(c_img)
+            if ids is not None and len(ids) > 0:
+                for corn, id_val in zip(corners, ids.flatten()):
+                    if id_val not in all_found_ids_list:
+                        all_found_ids_list.append(id_val)
+                        all_corners.append(corn)
+                        
         results = {}
-        if ids is not None:
-            for i, marker_id in enumerate(ids.flatten()):
-                # corners[i] has shape (1, 4, 2)
-                c_pts = corners[i][0]
-                center = np.mean(c_pts, axis=0)
-                
-                # Bounding box area approximation
-                area = cv2.contourArea(c_pts)
-                
-                # Midpoint of the "top" edge defines the forward vector
-                mid_top = (c_pts[0] + c_pts[1]) / 2.0
-                forward_vec = mid_top - center
-                
-                # Heading in radians
-                heading = np.arctan2(forward_vec[1], forward_vec[0])
-                
-                results[marker_id] = {
-                    "corners": c_pts,
-                    "center": center,  # (x, y)
-                    "area": area,
-                    "heading": heading
-                }
+        for i, marker_id in enumerate(all_found_ids_list):
+            # corners[i] has shape (1, 4, 2)
+            c_pts = all_corners[i][0]
+            center = np.mean(c_pts, axis=0)
+            
+            # Bounding box area approximation
+            area = cv2.contourArea(c_pts)
+            
+            # Midpoint of the "top" edge defines the forward vector
+            mid_top = (c_pts[0] + c_pts[1]) / 2.0
+            forward_vec = mid_top - center
+            
+            # Heading in radians
+            heading = np.arctan2(forward_vec[1], forward_vec[0])
+            
+            results[marker_id] = {
+                "corners": c_pts,
+                "center": center,  # (x, y)
+                "area": area,
+                "heading": heading
+            }
         return results
 
     def compute_homography(self, detected_markers):
