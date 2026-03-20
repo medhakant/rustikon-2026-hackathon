@@ -23,7 +23,7 @@ class MainController:
         self.cam2 = CameraClient("hackathon-12-camera.local", "378031")
         
         # Placeholder IP for Oracle; will be provided at venue
-        self.oracle = OracleClient("192.168.0.100", "123456", port=8080)
+        self.oracle = OracleClient("192.168.0.85", port=8000)
         
         # Corner IDs assuming [TL, TR, BR, BL] as requested: 11, 12, 13, 14
         self.vision = VisionSystem([11, 12, 13, 14])
@@ -96,8 +96,10 @@ class MainController:
         
         # Fallback to static images for debugging if cameras are offline
         if f1 is None:
+            print("Fallback f1 used!")
             f1 = cv2.imread("data/20260319_131143.jpg")
         if f2 is None:
+            print("Fallback f2 used!")
             f2 = cv2.imread("data/20260319_131145.jpg")
             
         # Cache frames for visualization if they are not None
@@ -131,9 +133,17 @@ class MainController:
         
         # Allow time for cameras/car to settle
         time.sleep(1.0)
-        pose_start = self.get_pose()
+        # Wait and retry for car visibility
+        pose_start = None
+        for i in range(10):
+            pose_start = self.get_pose()
+            if pose_start:
+                break
+            print(f"Waiting for car 8 to become visible... (attempt {i+1}/10)")
+            time.sleep(1.0)
+            
         if not pose_start:
-            print("Car not visible for calibration!")
+            print("Car 8 not visible for calibration after 10s!")
             return False
             
         start_pos, start_heading = pose_start
@@ -146,8 +156,14 @@ class MainController:
         
         pose_end = self.get_pose()
         if not pose_end:
-            print("Car lost after calibration pulse!")
-            return False
+            print("Car lost after calibration pulse, retrying...")
+            for i in range(5):
+                pose_end = self.get_pose()
+                if pose_end:
+                    break
+            if not pose_end:
+                print(':-((((')
+                return False
             
         end_pos, end_heading = pose_end
         
@@ -250,7 +266,7 @@ class MainController:
             # 4. Control logic (Proportional Controller)
             dist = np.linalg.norm(target_pos - pos_cartesian)
             
-            if dist < 0.25: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
+            if dist < 0.15: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
                 self.car.stop_car()
                 # Print once every second to avoid spam
                 if int(t*10) % 10 == 0:
@@ -259,34 +275,50 @@ class MainController:
                 target_vec = target_pos - pos_cartesian
                 target_heading = np.arctan2(target_vec[1], target_vec[0])
                 
-                err_heading = angle_diff(target_heading, heading)
+                err_fwd = angle_diff(target_heading, heading)
+                err_bwd = angle_diff(target_heading, heading + math.pi)
+                
+                # Choose direction that requires least rotation
+                if abs(err_fwd) <= abs(err_bwd):
+                    err_heading = err_fwd
+                    direction = 1
+                else:
+                    err_heading = err_bwd
+                    direction = -1
                 
                 # 4a. Rotation Pulse (Turn in place)
                 if abs(err_heading) > math.radians(25):
                     # Settle time between turn pulses to avoid random spirals
                     if t - self.last_turn_time > 1.2:
                         # Rotating in place (flip=True). 
-                        # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
-                        turn_speed = -0.4 if err_heading > 0 else 0.4
-                        print(f"[Control] Pulsing Rotation: err={math.degrees(err_heading):.1f}°")
+                        # err_percent scales speed based on error: 0.7x to 1.0x of the base speed (0.5)
+                        err_percent = max(0.7, abs(err_heading) / math.pi)
+                        turn_speed = (0.5 * err_percent) * (-1 if err_heading > 0 else 1)
+                        print(f"[Control] Pulsing Rotation: err={math.degrees(err_heading):.1f}° speed={turn_speed:.2f}")
                         self.car.set_command(turn_speed, True)
                         time.sleep(0.12) # Short pulse
                         self.car.stop_car()
-                        self.last_turn_time = time.time()
+                        self.last_turn_time = t
                     else:
                         # Wait for car to settle and vision to stabilize
                         self.car.stop_car()
                 else:
-                    # 4b. Driving Pulse (Forward)
-                    if t - self.last_drive_time > 0.8:
-                        # Heading aligned, drive forward in short pulses for precision
-                        drive_speed = min(0.4 + 0.4 * dist, 0.7)
-                        pulse_dur = 0.2 if dist > 0.4 else 0.1
-                        print(f"[Control] Pulsing Forward: dist={dist:.2f}m")
+                    # 4b. Driving Pulse (Bi-directional)
+                    settle_time = 0.8 if dist < 0.5 else 0.4
+                    if t - self.last_drive_time > settle_time:
+                        # Heading aligned (either fwd or bwd), drive in short pulses
+                        drive_speed = direction * min(0.4 + 1.0 * dist, 0.8)
+                        
+                        if dist > 0.4:
+                            pulse_dur = 1.0 # Long pulse for far distance
+                        else:
+                            pulse_dur = 0.2 if dist > 0.3 else 0.1
+                            
+                        print(f"[Control] Pulsing {'Forward' if direction > 0 else 'Backward'}: dist={dist:.2f}m speed={drive_speed:.2f}")
                         self.car.set_command(drive_speed, False)
                         time.sleep(pulse_dur)
                         self.car.stop_car()
-                        self.last_drive_time = time.time()
+                        self.last_drive_time = t
                     else:
                         self.car.stop_car()
                         

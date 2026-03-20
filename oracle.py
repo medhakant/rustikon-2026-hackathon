@@ -1,11 +1,9 @@
 import requests
 
 class OracleClient:
-    def __init__(self, host: str, token: str, port: int = 50051):
-        self.url = f"http://{host}:{port}/quadrant"
-        self.headers = {"Authorization": token}
+    def __init__(self, host: str, port: int = 8000):
+        self.url = f"http://{host}:{port}/goal"
         self.session = requests.Session()
-        self.session.headers.update(self.headers)
         
     def get_target_quadrant(self):
         try:
