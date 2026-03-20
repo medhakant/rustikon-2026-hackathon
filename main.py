@@ -25,8 +25,8 @@ class MainController:
         # Placeholder IP for Oracle; will be provided at venue
         self.oracle = OracleClient("192.168.0.100", "123456", port=8080)
         
-        # Corner IDs assuming [TL, TR, BR, BL]
-        self.vision = VisionSystem([0, 1, 2, 3])
+        # Corner IDs assuming [TL, TR, BR, BL] as requested: 11, 12, 13, 14
+        self.vision = VisionSystem([11, 12, 13, 14])
         
         self.H1 = None
         self.H2 = None
@@ -74,14 +74,8 @@ class MainController:
             if v2 is not None:
                 r2 = self.vision.detect_markers(v2)
                 v2 = self.vision.draw_visuals(v2, r2, self.H2)
-                
-            if v1 is not None and v2 is not None:
-                target_h = 480
-                h1, w1 = v1.shape[:2]; v1 = cv2.resize(v1, (int(w1*target_h/h1), target_h))
-                h2, w2 = v2.shape[:2]; v2 = cv2.resize(v2, (int(w2*target_h/h2), target_h))
-                self.viz.update(frame=np.hstack((v1, v2)))
-            elif v1 is not None: self.viz.update(frame=v1)
-            elif v2 is not None: self.viz.update(frame=v2)
+            
+            self.viz.update(frame1=v1, frame2=v2)
                     
             if self.H1 is None and self.H2 is None:
                 print("Could not find all 4 corners in either camera. Retrying in 1s.")
@@ -114,19 +108,7 @@ class MainController:
             res2 = self.vision.detect_markers(vis_f2)
             vis_f2 = self.vision.draw_visuals(vis_f2, res2, self.H2)
             
-        # Combine frames side-by-side for visualization
-        if vis_f1 is not None and vis_f2 is not None:
-            h1, w1 = vis_f1.shape[:2]
-            h2, w2 = vis_f2.shape[:2]
-            target_h = 480
-            vis_f1 = cv2.resize(vis_f1, (int(w1 * target_h / h1), target_h))
-            vis_f2 = cv2.resize(vis_f2, (int(w2 * target_h / h2), target_h))
-            combined = np.hstack((vis_f1, vis_f2))
-            self.viz.update(frame=combined)
-        elif vis_f1 is not None:
-            self.viz.update(frame=vis_f1)
-        elif vis_f2 is not None:
-            self.viz.update(frame=vis_f2)
+        self.viz.update(frame1=vis_f1, frame2=vis_f2)
             
         return pose
 
@@ -186,11 +168,17 @@ class MainController:
         # Q2: Top-Left (x<0.5, y>0.5) -> Center (0.25, 0.75)
         # Q3: Bottom-Left (x<0.5, y<0.5) -> Center (0.25, 0.25)
         # Q4: Bottom-Right (x>0.5, y<0.5) -> Center (0.75, 0.25)
+        # Mappings: Quadrants 1-4 and Corners 11-14
         centers = {
             1: np.array([0.75, 0.75]),
             2: np.array([0.25, 0.75]),
             3: np.array([0.25, 0.25]),
             4: np.array([0.75, 0.25]),
+            # Corners (with a small margin so the car doesn't hit the wall)
+            11: np.array([0.15, 0.85]), # TL
+            12: np.array([0.85, 0.85]), # TR
+            13: np.array([0.85, 0.15]), # BR
+            14: np.array([0.15, 0.15]), # BL
         }
         
         while True:
@@ -198,8 +186,15 @@ class MainController:
             dt = t - last_loop_time
             last_loop_time = t
             
-            # 1. Update target every ~2 seconds
-            if int(t) % 2 == 0:
+            # 1. Update target
+            # Check for manual override from the web dashboard first
+            manual_q = self.viz.field_state.get("target_q")
+            if manual_q is not None and manual_q != 0:
+                if manual_q != target_q:
+                    print(f"Manual Target Override received: {manual_q}")
+                    target_q = manual_q
+            elif int(t) % 2 == 0:
+                # If no manual target, poll Oracle
                 new_q = self.oracle.get_target_quadrant()
                 if new_q is not None and new_q != target_q:
                     print(f"New Target Quadrant received from Oracle: {new_q}")
@@ -237,7 +232,7 @@ class MainController:
             heading = -physical_heading_img
             
             # Update Viz state
-            self.viz.update(frame=None, car_pos=pos_cartesian, car_heading=heading, target_q=target_q)
+            self.viz.update(frame1=None, frame2=None, car_pos=pos_cartesian, car_heading=heading, target_q=target_q)
             
             # 4. Control logic (Proportional Controller)
             dist = np.linalg.norm(target_pos - pos_cartesian)

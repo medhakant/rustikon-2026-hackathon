@@ -89,7 +89,7 @@ class VisionSystem:
             src_points.append(detected_markers[c_id]["center"])
             
         src_points = np.array(src_points, dtype=np.float32)
-        H, _ = cv2.getPerspectiveTransform(src_points, dst_points)
+        H = cv2.getPerspectiveTransform(src_points, dst_points)
         return H
 
     def get_car_pose(self, image1, image2, car_id, H1, H2):
@@ -162,6 +162,9 @@ class VisionSystem:
         
         # 1. Draw all detected markers
         for marker_id, m in detected_markers.items():
+            if marker_id not in [11, 12, 13, 14, 8]:
+                continue
+                
             pts = m["corners"].astype(np.int32)
             cv2.polylines(vis_img, [pts], True, (0, 255, 0), 2)
             
