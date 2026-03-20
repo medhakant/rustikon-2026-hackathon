@@ -1,11 +1,13 @@
 import time
 import math
+import cv2
 import numpy as np
 
 from car import CarClient
 from camera import CameraClient
 from oracle import OracleClient
 from vision import VisionSystem
+from visualization import VisualizationServer
 
 def angle_diff(target, current):
     # Returns the shortest difference between two angles in [-pi, pi]
@@ -16,9 +18,9 @@ class MainController:
     def __init__(self, car_id: int):
         self.car_id = car_id
         # In a real scenario, IPs and tokens would be loaded from env vars
-        self.car = CarClient(f"hackathon-{car_id}-car.local", "000000")
-        self.cam1 = CameraClient("hackathon-11-camera.local", "123456")
-        self.cam2 = CameraClient("hackathon-12-camera.local", "123456")
+        self.car = CarClient(f"hackathon-{car_id}-car.local", "746007")
+        self.cam1 = CameraClient("hackathon-11-camera.local", "983149")
+        self.cam2 = CameraClient("hackathon-12-camera.local", "378031")
         
         # Placeholder IP for Oracle; will be provided at venue
         self.oracle = OracleClient("192.168.0.100", "123456", port=8080)
@@ -30,11 +32,22 @@ class MainController:
         self.H2 = None
         self.heading_offset = 0.0
         
+        # Visualization
+        self.viz = VisualizationServer()
+        self.viz.start()
+        
+        self.last_f1 = None
+        self.last_f2 = None
+        
     def setup_vision(self):
         print("Setting up vision and homography...")
         while self.H1 is None and self.H2 is None:
             f1 = self.cam1.get_frame()
             f2 = self.cam2.get_frame()
+            
+            # Fallback for debugging if needed
+            if f1 is None: f1 = cv2.imread("data/20260319_131143.jpg")
+            if f2 is None: f2 = cv2.imread("data/20260319_131145.jpg")
             
             if f1 is not None:
                 res1 = self.vision.detect_markers(f1)
@@ -48,6 +61,28 @@ class MainController:
                 if self.H2 is not None:
                     print("Homography H2 computed.")
                     
+            # Update visualization during setup
+            if f1 is not None: self.last_f1 = f1
+            if f2 is not None: self.last_f2 = f2
+            
+            # Combine and draw even if H is not yet computed
+            v1 = self.last_f1.copy() if self.last_f1 is not None else None
+            if v1 is not None:
+                r1 = self.vision.detect_markers(v1)
+                v1 = self.vision.draw_visuals(v1, r1, self.H1)
+            v2 = self.last_f2.copy() if self.last_f2 is not None else None
+            if v2 is not None:
+                r2 = self.vision.detect_markers(v2)
+                v2 = self.vision.draw_visuals(v2, r2, self.H2)
+                
+            if v1 is not None and v2 is not None:
+                target_h = 480
+                h1, w1 = v1.shape[:2]; v1 = cv2.resize(v1, (int(w1*target_h/h1), target_h))
+                h2, w2 = v2.shape[:2]; v2 = cv2.resize(v2, (int(w2*target_h/h2), target_h))
+                self.viz.update(frame=np.hstack((v1, v2)))
+            elif v1 is not None: self.viz.update(frame=v1)
+            elif v2 is not None: self.viz.update(frame=v2)
+                    
             if self.H1 is None and self.H2 is None:
                 print("Could not find all 4 corners in either camera. Retrying in 1s.")
                 time.sleep(1.0)
@@ -55,7 +90,45 @@ class MainController:
     def get_pose(self):
         f1 = self.cam1.get_frame()
         f2 = self.cam2.get_frame()
-        return self.vision.get_car_pose(f1, f2, self.car_id, self.H1, self.H2)
+        
+        # Fallback to static images for debugging if cameras are offline
+        if f1 is None:
+            f1 = cv2.imread("data/20260319_131143.jpg")
+        if f2 is None:
+            f2 = cv2.imread("data/20260319_131145.jpg")
+            
+        # Cache frames for visualization if they are not None
+        if f1 is not None: self.last_f1 = f1
+        if f2 is not None: self.last_f2 = f2
+        
+        pose = self.vision.get_car_pose(f1, f2, self.car_id, self.H1, self.H2)
+        
+        # Update visualization using cached frames
+        vis_f1 = self.last_f1.copy() if self.last_f1 is not None else None
+        if vis_f1 is not None:
+            res1 = self.vision.detect_markers(vis_f1)
+            vis_f1 = self.vision.draw_visuals(vis_f1, res1, self.H1)
+            
+        vis_f2 = self.last_f2.copy() if self.last_f2 is not None else None
+        if vis_f2 is not None:
+            res2 = self.vision.detect_markers(vis_f2)
+            vis_f2 = self.vision.draw_visuals(vis_f2, res2, self.H2)
+            
+        # Combine frames side-by-side for visualization
+        if vis_f1 is not None and vis_f2 is not None:
+            h1, w1 = vis_f1.shape[:2]
+            h2, w2 = vis_f2.shape[:2]
+            target_h = 480
+            vis_f1 = cv2.resize(vis_f1, (int(w1 * target_h / h1), target_h))
+            vis_f2 = cv2.resize(vis_f2, (int(w2 * target_h / h2), target_h))
+            combined = np.hstack((vis_f1, vis_f2))
+            self.viz.update(frame=combined)
+        elif vis_f1 is not None:
+            self.viz.update(frame=vis_f1)
+        elif vis_f2 is not None:
+            self.viz.update(frame=vis_f2)
+            
+        return pose
 
     def calibrate(self):
         print("Starting calibration pulse...")
@@ -163,6 +236,9 @@ class MainController:
             physical_heading_img = marker_heading + self.heading_offset
             heading = -physical_heading_img
             
+            # Update Viz state
+            self.viz.update(frame=None, car_pos=pos_cartesian, car_heading=heading, target_q=target_q)
+            
             # 4. Control logic (Proportional Controller)
             dist = np.linalg.norm(target_pos - pos_cartesian)
             
@@ -191,7 +267,7 @@ class MainController:
             time.sleep(0.05) 
 
 if __name__ == "__main__":
-    ctrl = MainController(car_id=9)
+    ctrl = MainController(car_id=8)
     try:
         ctrl.run_loop()
     except KeyboardInterrupt:
