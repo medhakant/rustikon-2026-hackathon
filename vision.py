@@ -12,6 +12,21 @@ class VisionSystem:
         self.parameters = aruco.DetectorParameters()
         self.detector = aruco.ArucoDetector(self.aruco_dict, self.parameters)
         
+        # Normalized [0,1]x[0,1] field coordinates for the corners
+        self.dst_points = np.array([
+            [0, 1], [1, 1], [1, 0], [0, 0]
+        ], dtype=np.float32)
+        
+        # Persistent cache for detected corners per camera (cam_id -> {marker_id: center_uv})
+        self.corner_caches = {}
+
+    def update_corner_cache(self, cam_id, detected_markers):
+        if cam_id not in self.corner_caches:
+            self.corner_caches[cam_id] = {}
+        for c_id in self.corner_ids:
+            if c_id in detected_markers:
+                self.corner_caches[cam_id][c_id] = detected_markers[c_id]["center"]
+        
     def detect_markers(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
@@ -70,26 +85,37 @@ class VisionSystem:
             }
         return results
 
-    def compute_homography(self, detected_markers):
+    def compute_homography(self, cam_id, detected_markers=None):
         """
         Given markers detected in a camera frame, computes the perspective transform
         mapping the 4 corners to a normalized [0,1]x[0,1] square.
         """
-        src_points = []
-        dst_points = np.array([
-            [0.0, 0.0],  # top-left
-            [1.0, 0.0],  # top-right
-            [1.0, 1.0],  # bottom-right
-            [0.0, 1.0]   # bottom-left
-        ], dtype=np.float32)
+        if detected_markers:
+            self.update_corner_cache(cam_id, detected_markers)
         
-        for c_id in self.corner_ids:
-            if c_id not in detected_markers:
-                return None  # We need all 4 corners to compute homography
-            src_points.append(detected_markers[c_id]["center"])
+        cache = self.corner_caches.get(cam_id, {})
+        src_points = []
+        dst_pts_list = []
+        
+        for i, c_id in enumerate(self.corner_ids):
+            if c_id in cache:
+                src_points.append(cache[c_id])
+                dst_pts_list.append(self.dst_points[i])
+                
+        if len(src_points) < 3:
+            return None
             
         src_points = np.array(src_points, dtype=np.float32)
-        H = cv2.getPerspectiveTransform(src_points, dst_points)
+        dst_pts_arr = np.array(dst_pts_list, dtype=np.float32)
+        
+        if len(src_points) >= 4:
+            # Full Perspective Transform
+            H, _ = cv2.findHomography(src_points, dst_pts_arr)
+        else:
+            # Affine Transform Fallback (needs 3 points)
+            # cv2.getAffineTransform needs exactly 3 points
+            M = cv2.getAffineTransform(src_points[:3], dst_pts_arr[:3])
+            H = np.vstack([M, [0, 0, 1]])
         return H
 
     def get_car_pose(self, image1, image2, car_id, H1, H2):

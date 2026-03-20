@@ -51,15 +51,15 @@ class MainController:
             
             if f1 is not None:
                 res1 = self.vision.detect_markers(f1)
-                self.H1 = self.vision.compute_homography(res1)
+                self.H1 = self.vision.compute_homography(1, res1)
                 if self.H1 is not None:
-                    print("Homography H1 computed.")
+                    print("Homography H1 solved using accumulated corners.")
                     
             if f2 is not None:
                 res2 = self.vision.detect_markers(f2)
-                self.H2 = self.vision.compute_homography(res2)
+                self.H2 = self.vision.compute_homography(2, res2)
                 if self.H2 is not None:
-                    print("Homography H2 computed.")
+                    print("Homography H2 solved using accumulated corners.")
                     
             # Update visualization during setup
             if f1 is not None: self.last_f1 = f1
@@ -76,6 +76,11 @@ class MainController:
                 v2 = self.vision.draw_visuals(v2, r2, self.H2)
             
             self.viz.update(frame1=v1, frame2=v2)
+                    
+            # Debug: Print unique set of detected corners from the persistent caches
+            c1_ids = list(self.vision.corner_caches.get(1, {}).keys())
+            c2_ids = list(self.vision.corner_caches.get(2, {}).keys())
+            print(f"Cam 1 corners seen: {c1_ids}, Cam 2 corners seen: {c2_ids}")
                     
             if self.H1 is None and self.H2 is None:
                 print("Could not find all 4 corners in either camera. Retrying in 1s.")
@@ -102,11 +107,15 @@ class MainController:
         if vis_f1 is not None:
             res1 = self.vision.detect_markers(vis_f1)
             vis_f1 = self.vision.draw_visuals(vis_f1, res1, self.H1)
+            # Update cache quietly
+            self.vision.update_corner_cache(1, res1)
             
         vis_f2 = self.last_f2.copy() if self.last_f2 is not None else None
         if vis_f2 is not None:
             res2 = self.vision.detect_markers(vis_f2)
             vis_f2 = self.vision.draw_visuals(vis_f2, res2, self.H2)
+            # Update cache quietly
+            self.vision.update_corner_cache(2, res2)
             
         self.viz.update(frame1=vis_f1, frame2=vis_f2)
             
@@ -127,7 +136,7 @@ class MainController:
         
         # Pulse forward to find true forward vector
         self.car.set_command(0.5, False)
-        time.sleep(0.5)
+        time.sleep(1.0) # Increased from 0.5s to move more
         self.car.stop_car()
         time.sleep(0.5)
         
