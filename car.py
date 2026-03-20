@@ -17,10 +17,10 @@ class CarClient:
         self._thread = None
         self._lock = threading.Lock()
 
-    def set_command(self, speed: float, flip: bool, enforce_deadband: bool = True):
+    def set_command(self, speed: float, flip: bool, enforce_min_abs_v: bool = True):
         with self._lock:
-            # Enforce 0.35 deadband if requested and moving
-            if enforce_deadband and speed != 0.0:
+            # Enforce 0.35 minimum absolute velocity if requested and moving
+            if enforce_min_abs_v and speed != 0.0:
                 if 0 < speed < 0.35:
                     speed = 0.35
                 elif -0.35 < speed < 0:
@@ -31,7 +31,7 @@ class CarClient:
             self._flip = bool(flip)
 
     def stop_car(self):
-        self.set_command(0.0, False, enforce_deadband=False)
+        self.set_command(0.0, False, enforce_min_abs_v=False)
 
     def _heartbeat_loop(self):
         # Use session to reuse TCP connections if possible (though the hackathon server might drop them)
