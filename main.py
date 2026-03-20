@@ -162,12 +162,21 @@ class MainController:
 
     def run_loop(self):
         self.setup_vision()
-
-        if not self.calibrate():
-            print("Calibration failed. Exiting.")
-            self.car.stop_heartbeat()
-            return
-        last_time = 0.0
+        c = self.calibrate()
+        if not c:
+            for i in range(10):
+                self.car.set_command(0.5, True)
+                time.sleep(0.2)
+                self.car.stop_car()
+                time.sleep(0.2)
+                c = self.calibrate()
+                if c:
+                    break
+            if not c:
+                print("Calibration failed. Exiting.")
+                self.car.stop_heartbeat()
+                return
+        lost_time = 0.0
         last_loop_time = time.time()
         target_q = None
         
@@ -216,6 +225,10 @@ class MainController:
                     # Recovery pivot
                     print("Car Lost! Initiating recovery wiggle...")
                     self.car.set_command(0.35, True)
+                    time.sleep(0.2)
+                    self.car.set_command(0.5, False)
+                    time.sleep(0.2)
+                    self.car.stop_car()
                 elif lost_time > 0.5:
                     # Safety stop
                     self.car.stop_car()
@@ -237,7 +250,7 @@ class MainController:
             dist = np.linalg.norm(target_pos - pos_cartesian)
             print(f"Distance to goal: {dist:.3f} from {target_pos} to {pos_cartesian}")
 
-            if dist < 0.05:
+            if dist < 0.15:
                 print(f"Goal reached: {target_q} ")
                 self.car.stop_car()
                 continue
@@ -248,16 +261,20 @@ class MainController:
             err_heading = angle_diff(target_heading, heading)
             if abs(err_heading) > math.radians(20):
                 print(f"Correcting Heading: {math.degrees(err_heading):.1f} deg")
-                move_speed = (abs(err_heading) * 0.47/math.pi)*(-1 if err_heading > 0 else 1)
+                move_speed = (abs(err_heading) * 0.7 * 0.47/math.pi)*(-1 if err_heading > 0 else 1)
                 self.car.set_command(move_speed, flip=True)
-                time.sleep(0.2)
+                time.sleep(0.4)
                 self.car.stop_car()
                 last_loop_time = 0
                 dont_poll_oracle= True
 
+            turbo_mode = abs(err_heading) < math.radians(10)
+            if turbo_mode:
+                print("TURBO MODE!!!!!!!1")
+
             print("Heading correct. Moving to Goal.")
-            self.car.set_command(0.7 * (dist/0.5), False)
-            time.sleep(0.3)
+            self.car.set_command((0.7 + (0.2*int(turbo_mode)))* (dist/0.5), False)
+            time.sleep(0.7 if turbo_mode else 0.3)
             self.car.stop_car()
             
                     
