@@ -157,8 +157,8 @@ class VisualizationServer:
                 ctx.font = 'bold 16px Inter';
                 ctx.textAlign = 'center';
                 const cornerCoords = [
-                    {x:0, y:1, label:'11'}, {x:1, y:1, label:'12'},
-                    {x:1, y:0, label:'13'}, {x:0, y:0, label:'14'}
+                    {x:0, y:0, label:'11'}, {x:1, y:0, label:'12'},
+                    {x:0, y:1, label:'14'}, {x:1, y:1, label:'13'}
                 ];
                 cornerCoords.forEach(c => {
                     const p = toCanvas(c.x, c.y);
@@ -183,8 +183,6 @@ class VisualizationServer:
                     document.getElementById('target-display').innerHTML = `TARGET: <span class="highlight">Q${state.target_q}</span>`;
                 } else if (state.target_q >= 11) {
                     document.getElementById('target-display').innerHTML = `TARGET: <span class="highlight">CORNER ${state.target_q}</span>`;
-                } else {
-                    document.getElementById('target-display').innerHTML = `TARGET: <span class="highlight">AUTO</span>`;
                 }
 
                 // Car 8
@@ -226,9 +224,7 @@ class VisualizationServer:
 
         @self.app.route('/set_target/<int:q>')
         def set_target(q):
-            with self.lock:
-                self.field_state["target_q"] = q
-            return {"status": "ok", "target_q": q}
+            return {"status": "ok"}
 
     def _generate_frames(self, cam_id):
         while True:

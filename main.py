@@ -165,11 +165,15 @@ class MainController:
         c = self.calibrate()
         if not c:
             for i in range(10):
-                self.car.set_command(0.5, True)
-                time.sleep(0.2)
-                self.car.stop_car()
-                time.sleep(0.2)
-                c = self.calibrate()
+                for i in range(3):
+                    self.car.set_command(0.23, True)
+                    time.sleep(0.2)
+                    self.car.set_command(0.5, False)
+                    time.sleep(0.2)
+                    self.car.stop_car()
+                    c = self.calibrate()
+                    if c:
+                        break
                 if c:
                     break
             if not c:
@@ -215,6 +219,7 @@ class MainController:
                 continue
                 
             target_number = {'TL': 11, 'TR': 12, 'BR': 13, 'BL': 14}.get(target_q, '')
+            self.viz.update(target_q=target_number)
             target_pos = centers.get(target_number, np.array([0.5, 0.5]))
             
             # 2. Get pose
@@ -273,8 +278,8 @@ class MainController:
                 print("TURBO MODE!!!!!!!1")
 
             print("Heading correct. Moving to Goal.")
-            self.car.set_command((0.7 + (0.2*int(turbo_mode)))* (dist/0.5), False)
-            time.sleep(0.7 if turbo_mode else 0.3)
+            self.car.set_command((0.7 + (0.3*int(turbo_mode)))* (dist/0.5), False)
+            time.sleep(0.8 if turbo_mode else 0.3)
             self.car.stop_car()
             
                     
