@@ -23,7 +23,7 @@ class MainController:
         self.cam2 = CameraClient("hackathon-12-camera.local", "378031")
         
         # Placeholder IP for Oracle; will be provided at venue
-        self.oracle = OracleClient("192.168.0.100", "123456", port=8080)
+        self.oracle = OracleClient("192.168.0.85", port=8000)
         
         # Corner IDs assuming [TL, TR, BR, BL] as requested: 11, 12, 13, 14
         self.vision = VisionSystem([11, 12, 13, 14])
@@ -188,10 +188,10 @@ class MainController:
             3: np.array([0.25, 0.25]),
             4: np.array([0.75, 0.25]),
             # Corners (with a small margin so the car doesn't hit the wall)
-            11: np.array([0.15, 0.85]), # TL
-            12: np.array([0.85, 0.85]), # TR
-            13: np.array([0.85, 0.15]), # BR
-            14: np.array([0.15, 0.15]), # BL
+            11: np.array([0.05, 0.95]), # TL
+            12: np.array([0.95, 0.95]), # TR
+            13: np.array([0.95, 0.05]), # BR
+            14: np.array([0.05, 0.05]), # BL
         }
         
         while True:
@@ -201,7 +201,8 @@ class MainController:
             
             # 1. Update target
             # Check for manual override from the web dashboard first
-            manual_q = self.viz.field_state.get("target_q")
+            # manual_q = self.viz.field_state.get("target_q")
+            manual_q = None
             if manual_q is not None and manual_q != 0:
                 if manual_q != target_q:
                     print(f"Manual Target Override received: {manual_q}")
@@ -250,7 +251,7 @@ class MainController:
             # 4. Control logic (Proportional Controller)
             dist = np.linalg.norm(target_pos - pos_cartesian)
             
-            if dist < 0.25: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
+            if dist < 0.05: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
                 self.car.stop_car()
                 # Print once every second to avoid spam
                 if int(t*10) % 10 == 0:
@@ -264,7 +265,7 @@ class MainController:
                 # 4a. Rotation Pulse (Turn in place)
                 if abs(err_heading) > math.radians(25):
                     # Settle time between turn pulses to avoid random spirals
-                    if t - self.last_turn_time > 1.2:
+                    if t - self.last_turn_time > 0.2:
                         # Rotating in place (flip=True). 
                         # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
                         turn_speed = -0.4 if err_heading > 0 else 0.4
@@ -278,10 +279,10 @@ class MainController:
                         self.car.stop_car()
                 else:
                     # 4b. Driving Pulse (Forward)
-                    if t - self.last_drive_time > 0.8:
+                    if t - self.last_drive_time > 0.2:
                         # Heading aligned, drive forward in short pulses for precision
-                        drive_speed = min(0.4 + 0.4 * dist, 0.7)
-                        pulse_dur = 0.2 if dist > 0.4 else 0.1
+                        drive_speed = min(0.4 + 0.4 * dist, 0.5)
+                        pulse_dur = 0.1 if dist > 0.4 else 0.05
                         print(f"[Control] Pulsing Forward: dist={dist:.2f}m")
                         self.car.set_command(drive_speed, False)
                         time.sleep(pulse_dur)

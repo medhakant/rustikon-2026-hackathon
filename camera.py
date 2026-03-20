@@ -30,9 +30,9 @@ class CameraClient:
             if resp.status_code == 200:
                 # Save first for debugging as requested
                 timestamp = int(self.last_fetch_time * 1000)
-                file_path = os.path.join(self.save_dir, f"cam_{self.host}_{timestamp}.png")
-                with open(file_path, "wb") as f:
-                    f.write(resp.content)
+                # file_path = os.path.join(self.save_dir, f"cam_{self.host}_{timestamp}.png")
+                # with open(file_path, "wb") as f:
+                #     f.write(resp.content)
                 
                 image_array = np.asarray(bytearray(resp.content), dtype=np.uint8)
                 frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
