@@ -3,7 +3,7 @@ import time
 import requests
 
 class CarClient:
-    def __init__(self, host: str, token: str, port: int = 50051):
+    def __init__(self, host: str, token: str, port: int = 5000):
         self.url = f"http://{host}:{port}/"
         self.headers = {
             "Content-Type": "application/json",

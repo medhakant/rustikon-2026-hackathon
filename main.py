@@ -136,9 +136,9 @@ class MainController:
         
         # Pulse forward to find true forward vector
         self.car.set_command(0.5, False)
-        time.sleep(1.0) # Increased from 0.5s to move more
+        time.sleep(1)
         self.car.stop_car()
-        time.sleep(0.5)
+        time.sleep(1)
         
         pose_end = self.get_pose()
         if not pose_end:
