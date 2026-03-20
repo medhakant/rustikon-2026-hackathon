@@ -32,10 +32,6 @@ class MainController:
         self.H2 = None
         self.heading_offset = 0.0
         
-        # Timing for pulsed control
-        self.last_turn_time = 0.0
-        self.last_drive_time = 0.0
-        
         # Visualization
         self.viz = VisualizationServer()
         self.viz.start()
@@ -140,9 +136,9 @@ class MainController:
         
         # Pulse forward to find true forward vector
         self.car.set_command(0.5, False)
-        time.sleep(1)
+        time.sleep(0.5)
         self.car.stop_car()
-        time.sleep(1)
+        time.sleep(0.2)
         
         pose_end = self.get_pose()
         if not pose_end:
@@ -166,14 +162,13 @@ class MainController:
 
     def run_loop(self):
         self.setup_vision()
+
         if not self.calibrate():
             print("Calibration failed. Exiting.")
             self.car.stop_heartbeat()
             return
-            
-        lost_time = 0.0
+        last_time = 0.0
         last_loop_time = time.time()
-        
         target_q = None
         
         # Quadrant centers matching Cartesian layout:
@@ -188,37 +183,30 @@ class MainController:
             3: np.array([0.25, 0.25]),
             4: np.array([0.75, 0.25]),
             # Corners (with a small margin so the car doesn't hit the wall)
-            11: np.array([0.05, 0.95]), # TL
-            12: np.array([0.95, 0.95]), # TR
-            13: np.array([0.95, 0.05]), # BR
-            14: np.array([0.05, 0.05]), # BL
+            11: np.array([0.25, 0.25]), # TL
+            12: np.array([0.75, 0.25]), # TR
+            13: np.array([0.75, 0.75]), # BR
+            14: np.array([0.25, 0.75]), # BL
         }
-        
+        dont_poll_oracle = False
+        print("Starting loop")
         while True:
             t = time.time()
             dt = t - last_loop_time
+            if dt < 0.5:
+                continue
             last_loop_time = t
-            
-            # 1. Update target
-            # Check for manual override from the web dashboard first
-            # manual_q = self.viz.field_state.get("target_q")
-            manual_q = None
-            if manual_q is not None and manual_q != 0:
-                if manual_q != target_q:
-                    print(f"Manual Target Override received: {manual_q}")
-                    target_q = manual_q
-            elif int(t) % 2 == 0:
-                # If no manual target, poll Oracle
-                new_q = self.oracle.get_target_quadrant()
-                if new_q is not None and new_q != target_q:
-                    print(f"New Target Quadrant received from Oracle: {new_q}")
-                    target_q = new_q
-                    
+            new_q = None if dont_poll_oracle else self.oracle.get_target_quadrant()
+            dont_poll_oracle = False
+            if new_q is not None and new_q != target_q:
+                print(f"New Target Quadrant received from Oracle: {new_q}")
+                target_q = new_q
             if target_q is None:
                 time.sleep(0.1)
                 continue
                 
-            target_pos = centers.get(target_q, np.array([0.5, 0.5]))
+            target_number = {'TL': 11, 'TR': 12, 'BR': 13, 'BL': 14}.get(target_q, '')
+            target_pos = centers.get(target_number, np.array([0.5, 0.5]))
             
             # 2. Get pose
             pose = self.get_pose()
@@ -233,13 +221,10 @@ class MainController:
                     self.car.stop_car()
                 time.sleep(0.1)
                 continue
-                
-            lost_time = 0.0
+
             pos, marker_heading = pose
-            
-            # 3. Vision mapping to standard Cartesian
-            # Invert Y because image Y increases downwards, but quadrants expect Cartesian (Y up)
             pos_cartesian = np.array([pos[0], 1.0 - pos[1]])
+            lost_time = 0.0
             
             # Apply offset from calibration and negate Y-axis effect on angle
             physical_heading_img = marker_heading + self.heading_offset
@@ -250,48 +235,162 @@ class MainController:
             
             # 4. Control logic (Proportional Controller)
             dist = np.linalg.norm(target_pos - pos_cartesian)
-            
-            if dist < 0.05: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
+            print(f"Distance to goal: {dist:.3f} from {target_pos} to {pos_cartesian}")
+
+            if dist < 0.05:
+                print(f"Goal reached: {target_q} ")
                 self.car.stop_car()
-                # Print once every second to avoid spam
-                if int(t*10) % 10 == 0:
-                    print(f"SETTLED in Quadrant {target_q}. Awaiting new target...")
-            else:
-                target_vec = target_pos - pos_cartesian
-                target_heading = np.arctan2(target_vec[1], target_vec[0])
+                continue
+
+            target_vec = target_pos - pos_cartesian
+            target_heading = np.arctan2(target_vec[1], target_vec[0])
+            
+            err_heading = angle_diff(target_heading, heading)
+            if abs(err_heading) > math.radians(20):
+                print(f"Correcting Heading: {math.degrees(err_heading):.1f} deg")
+                move_speed = (abs(err_heading) * 0.47/math.pi)*(-1 if err_heading > 0 else 1)
+                self.car.set_command(move_speed, flip=True)
+                time.sleep(0.2)
+                self.car.stop_car()
+                last_loop_time = 0
+                dont_poll_oracle= True
+
+            print("Heading correct. Moving to Goal.")
+            self.car.set_command(0.7 * (dist/0.5), False)
+            time.sleep(0.3)
+            self.car.stop_car()
+            
+                    
+
+
+    # def run_loop(self):
+    #     self.setup_vision()
+    #     if not self.calibrate():
+    #         print("Calibration failed. Exiting.")
+    #         self.car.stop_heartbeat()
+    #         return
+            
+    #     lost_time = 0.0
+    #     last_loop_time = time.time()
+        
+    #     target_q = None
+        
+    #     # Quadrant centers matching Cartesian layout:
+    #     # Q1: Top-Right (x>0.5, y>0.5) -> Center (0.75, 0.75)
+    #     # Q2: Top-Left (x<0.5, y>0.5) -> Center (0.25, 0.75)
+    #     # Q3: Bottom-Left (x<0.5, y<0.5) -> Center (0.25, 0.25)
+    #     # Q4: Bottom-Right (x>0.5, y<0.5) -> Center (0.75, 0.25)
+    #     # Mappings: Quadrants 1-4 and Corners 11-14
+    #     centers = {
+    #         1: np.array([0.75, 0.75]),
+    #         2: np.array([0.25, 0.75]),
+    #         3: np.array([0.25, 0.25]),
+    #         4: np.array([0.75, 0.25]),
+    #         # Corners (with a small margin so the car doesn't hit the wall)
+    #         11: np.array([0.05, 0.95]), # TL
+    #         12: np.array([0.95, 0.95]), # TR
+    #         13: np.array([0.95, 0.05]), # BR
+    #         14: np.array([0.05, 0.05]), # BL
+    #     }
+        
+    #     while True:
+    #         t = time.time()
+    #         dt = t - last_loop_time
+    #         last_loop_time = t
+            
+    #         # 1. Update target
+    #         # Check for manual override from the web dashboard first
+    #         # manual_q = self.viz.field_state.get("target_q")
+    #         manual_q = None
+    #         if manual_q is not None and manual_q != 0:
+    #             if manual_q != target_q:
+    #                 print(f"Manual Target Override received: {manual_q}")
+    #                 target_q = manual_q
+    #         elif int(t) % 2 == 0:
+    #             # If no manual target, poll Oracle
+    #             new_q = self.oracle.get_target_quadrant()
+    #             if new_q is not None and new_q != target_q:
+    #                 print(f"New Target Quadrant received from Oracle: {new_q}")
+    #                 target_q = new_q
+                    
+    #         if target_q is None:
+    #             time.sleep(0.1)
+    #             continue
                 
-                err_heading = angle_diff(target_heading, heading)
+    #         target_pos = centers.get(target_q, np.array([0.5, 0.5]))
+            
+    #         # 2. Get pose
+    #         pose = self.get_pose()
+    #         if pose is None:
+    #             lost_time += dt
+    #             if lost_time > 2.0:
+    #                 # Recovery pivot
+    #                 print("Car Lost! Initiating recovery wiggle...")
+    #                 self.car.set_command(0.35, True)
+    #             elif lost_time > 0.5:
+    #                 # Safety stop
+    #                 self.car.stop_car()
+    #             time.sleep(0.1)
+    #             continue
                 
-                # 4a. Rotation Pulse (Turn in place)
-                if abs(err_heading) > math.radians(25):
-                    # Settle time between turn pulses to avoid random spirals
-                    if t - self.last_turn_time > 0.2:
-                        # Rotating in place (flip=True). 
-                        # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
-                        turn_speed = -0.4 if err_heading > 0 else 0.4
-                        print(f"[Control] Pulsing Rotation: err={math.degrees(err_heading):.1f}°")
-                        self.car.set_command(turn_speed, True)
-                        time.sleep(0.12) # Short pulse
-                        self.car.stop_car()
-                        self.last_turn_time = time.time()
-                    else:
-                        # Wait for car to settle and vision to stabilize
-                        self.car.stop_car()
-                else:
-                    # 4b. Driving Pulse (Forward)
-                    if t - self.last_drive_time > 0.2:
-                        # Heading aligned, drive forward in short pulses for precision
-                        drive_speed = min(0.4 + 0.4 * dist, 0.5)
-                        pulse_dur = 0.1 if dist > 0.4 else 0.05
-                        print(f"[Control] Pulsing Forward: dist={dist:.2f}m")
-                        self.car.set_command(drive_speed, False)
-                        time.sleep(pulse_dur)
-                        self.car.stop_car()
-                        self.last_drive_time = time.time()
-                    else:
-                        self.car.stop_car()
+    #         lost_time = 0.0
+    #         pos, marker_heading = pose
+            
+    #         # 3. Vision mapping to standard Cartesian
+    #         # Invert Y because image Y increases downwards, but quadrants expect Cartesian (Y up)
+    #         pos_cartesian = np.array([pos[0], 1.0 - pos[1]])
+            
+    #         # Apply offset from calibration and negate Y-axis effect on angle
+    #         physical_heading_img = marker_heading + self.heading_offset
+    #         heading = -physical_heading_img
+            
+    #         # Update Viz state
+    #         self.viz.update(frame1=None, frame2=None, car_pos=pos_cartesian, car_heading=heading, target_q=target_q)
+            
+    #         # 4. Control logic (Proportional Controller)
+    #         dist = np.linalg.norm(target_pos - pos_cartesian)
+            
+    #         if dist < 0.05: # Margin to settle comfortably within quadrant (bounds are 0.5x0.5)
+    #             self.car.stop_car()
+    #             # Print once every second to avoid spam
+    #             if int(t*10) % 10 == 0:
+    #                 print(f"SETTLED in Quadrant {target_q}. Awaiting new target...")
+    #         else:
+    #             target_vec = target_pos - pos_cartesian
+    #             target_heading = np.arctan2(target_vec[1], target_vec[0])
+                
+    #             err_heading = angle_diff(target_heading, heading)
+                
+    #             # 4a. Rotation Pulse (Turn in place)
+    #             if abs(err_heading) > math.radians(25):
+    #                 # Settle time between turn pulses to avoid random spirals
+    #                 if t - self.last_turn_time > 0.2:
+    #                     # Rotating in place (flip=True). 
+    #                     # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
+    #                     turn_speed = -0.4 if err_heading > 0 else 0.4
+    #                     print(f"[Control] Pulsing Rotation: err={math.degrees(err_heading):.1f}°")
+    #                 self.car.set_command(turn_speed, True)
+    #                     time.sleep(0.12) # Short pulse
+    #                     self.car.stop_car()
+    #                     self.last_turn_time = time.time()
+    #                 else:
+    #                     # Wait for car to settle and vision to stabilize
+    #                     self.car.stop_car()
+    #             else:
+    #                 # 4b. Driving Pulse (Forward)
+    #                 if t - self.last_drive_time > 0.2:
+    #                     # Heading aligned, drive forward in short pulses for precision
+    #                     drive_speed = min(0.4 + 0.4 * dist, 0.5)
+    #                     pulse_dur = 0.1 if dist > 0.4 else 0.05
+    #                     print(f"[Control] Pulsing Forward: dist={dist:.2f}m")
+    #                 self.car.set_command(drive_speed, False)
+    #                     time.sleep(pulse_dur)
+    #                     self.car.stop_car()
+    #                     self.last_drive_time = time.time()
+    #                 else:
+    #                     self.car.stop_car()
                         
-            time.sleep(0.05) 
+    #         time.sleep(0.05) 
 
 if __name__ == "__main__":
     ctrl = MainController(car_id=8)
