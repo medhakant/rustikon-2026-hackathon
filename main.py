@@ -41,7 +41,10 @@ class MainController:
         
     def setup_vision(self):
         print("Setting up vision and homography...")
-        while self.H1 is None and self.H2 is None:
+        start_setup = time.time()
+        # Attempt to find both H1 and H2
+        while True:
+            t_loop = time.time()
             f1 = self.cam1.get_frame()
             f2 = self.cam2.get_frame()
             
@@ -51,21 +54,23 @@ class MainController:
             
             if f1 is not None:
                 res1 = self.vision.detect_markers(f1)
-                self.H1 = self.vision.compute_homography(1, res1)
-                if self.H1 is not None:
-                    print("Homography H1 solved using accumulated corners.")
+                if self.H1 is None:
+                    self.H1 = self.vision.compute_homography(1, res1)
+                    if self.H1 is not None:
+                        print("Homography H1 solved using accumulated corners.")
                     
             if f2 is not None:
                 res2 = self.vision.detect_markers(f2)
-                self.H2 = self.vision.compute_homography(2, res2)
-                if self.H2 is not None:
-                    print("Homography H2 solved using accumulated corners.")
+                if self.H2 is None:
+                    self.H2 = self.vision.compute_homography(2, res2)
+                    if self.H2 is not None:
+                        print("Homography H2 solved using accumulated corners.")
                     
             # Update visualization during setup
             if f1 is not None: self.last_f1 = f1
             if f2 is not None: self.last_f2 = f2
             
-            # Combine and draw even if H is not yet computed
+            # Combine and draw visuals
             v1 = self.last_f1.copy() if self.last_f1 is not None else None
             if v1 is not None:
                 r1 = self.vision.detect_markers(v1)
@@ -77,14 +82,26 @@ class MainController:
             
             self.viz.update(frame1=v1, frame2=v2)
                     
-            # Debug: Print unique set of detected corners from the persistent caches
+            # Debug output
             c1_ids = list(self.vision.corner_caches.get(1, {}).keys())
             c2_ids = list(self.vision.corner_caches.get(2, {}).keys())
-            print(f"Cam 1 corners seen: {c1_ids}, Cam 2 corners seen: {c2_ids}")
+            print(f"Vision Setup: H1={self.H1 is not None}, H2={self.H2 is not None} | Corners: C1={c1_ids}, C2={c2_ids}")
                     
-            if self.H1 is None and self.H2 is None:
-                print("Could not find all 4 corners in either camera. Retrying in 1s.")
-                time.sleep(1.0)
+            # Success condition
+            if self.H1 is not None and self.H2 is not None:
+                print("Both camera homographies successfully initialized.")
+                break
+                
+            # Timeout fallback: proceed if at least one is found after 10s
+            if (self.H1 is not None or self.H2 is not None) and (t_loop - start_setup > 10.0):
+                print(f"Setup timeout: Proceeding with available cameras (H1={self.H1 is not None}, H2={self.H2 is not None})")
+                break
+                
+            if self.H1 is None and self.H2 is None and (t_loop - start_setup > 15.0):
+                 print("Critical: Searching for any valid camera markers...")
+                 time.sleep(1.0)
+            elif self.H1 is None and self.H2 is None:
+                 time.sleep(0.5)
                 
     def get_pose(self):
         f1 = self.cam1.get_frame()
@@ -273,9 +290,16 @@ class MainController:
                 last_loop_time = 0
                 dont_poll_oracle= True
 
-            turbo_mode = abs(err_heading) < math.radians(10)
+            # Disable turbo if close to the border (0.1 normalized margin)
+            margin = 0.15
+            near_border = (pos_cartesian[0] < margin or pos_cartesian[0] > 1.0 - margin or 
+                           pos_cartesian[1] < margin or pos_cartesian[1] > 1.0 - margin)
+            
+            turbo_mode = abs(err_heading) < math.radians(10) and not near_border
             if turbo_mode:
                 print("TURBO MODE!!!!!!!1")
+            elif abs(err_heading) < math.radians(10):
+                print("Near border: Turbo mode disabled for safety.")
 
             print("Heading correct. Moving to Goal.")
             self.car.set_command((0.7 + (0.3*int(turbo_mode)))* (dist/0.5), False)

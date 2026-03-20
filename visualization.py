@@ -182,6 +182,16 @@ class VisualizationServer:
                     ctx.strokeRect(p.x, p.y, innerSize/2, innerSize/2);
                     document.getElementById('target-display').innerHTML = `TARGET: <span class="highlight">Q${state.target_q}</span>`;
                 } else if (state.target_q >= 11) {
+                ctx.fillStyle = 'rgba(207, 102, 121, 0.15)';
+                    let qx = 0, qy = 0;
+                    if (state.target_q === 11) { qx = 0; qy = 0; }
+                    if (state.target_q === 12) { qx = 0.5; qy = 0; }
+                    if (state.target_q === 13) { qx = 0.5; qy = 0.5; }
+                    if (state.target_q === 14) { qx = 0; qy = 0.5; }
+                    const p = toCanvas(qx, qy + 0.5);
+                    ctx.fillRect(p.x, p.y, innerSize/2, innerSize/2);
+                    ctx.strokeStyle = '#cf6679';
+                    ctx.strokeRect(p.x, p.y, innerSize/2, innerSize/2);
                     document.getElementById('target-display').innerHTML = `TARGET: <span class="highlight">CORNER ${state.target_q}</span>`;
                 }
 
