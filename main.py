@@ -10,7 +10,7 @@ from vision import VisionSystem
 from visualization import VisualizationServer
 
 def angle_diff(target, current):
-    # Returns the shortest difference between two angles in [-pi, pi]
+    # Returns the shortest difference between two angles in [-pi, pi].
     diff = target - current
     return (diff + math.pi) % (2 * math.pi) - math.pi
 
