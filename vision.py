@@ -30,19 +30,25 @@ class VisionSystem:
     def detect_markers(self, image):
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
+        # Priority sweeps first (as per tuning results)
         contrast_imgs = [("Base Grayscale", gray)]
-        # Alpha-Beta Sweeps
-        for alpha in [1.2, 1.5, 2.0, 3.0]:
-            for beta in [0, 10, 30, 50, -20]:
+        
+        # Boosted Gamma 0.5 was critical for Cam 11
+        invGamma05 = 1.0 / 0.5
+        table05 = np.array([((i / 255.0) ** invGamma05) * 255 for i in np.arange(0, 256)]).astype("uint8")
+        contrast_imgs.append(("Gamma 0.5", cv2.LUT(gray, table05)))
+        
+        # Reduced Alpha-Beta Sweeps
+        for alpha in [1.5, 2.0]: 
+            for beta in [0, 30]:
                 contrast_imgs.append((f"Abs a:{alpha} b:{beta}", cv2.convertScaleAbs(gray, alpha=alpha, beta=beta)))
                 
-        # CLAHE Sweeps
-        for cl in [2.0, 4.0, 6.0]:
-            for ts in [4, 8, 16]:
-                contrast_imgs.append((f"CLAHE {cl} {ts}", cv2.createCLAHE(clipLimit=cl, tileGridSize=(ts,ts)).apply(gray)))
+        # Reduced CLAHE Sweeps
+        for cl in [2.0, 4.0]:
+            contrast_imgs.append((f"CLAHE {cl}", cv2.createCLAHE(clipLimit=cl, tileGridSize=(8,8)).apply(gray)))
                 
-        # Gamma sweeps
-        for gamma in [0.7, 1.5, 2.0]:
+        # Other Gamma sweeps
+        for gamma in [0.7, 1.5]:
             invGamma = 1.0 / gamma
             table = np.array([((i / 255.0) ** invGamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
             contrast_imgs.append((f"Gamma {gamma}", cv2.LUT(gray, table)))
@@ -50,8 +56,10 @@ class VisionSystem:
         all_found_ids_list = []
         all_corners = []
         
-        # Ensure perimeter threshold is safe to prevent noise
-        self.parameters.minMarkerPerimeterRate = 0.03
+        # Relax parameters for small/distant markers
+        self.parameters.minMarkerPerimeterRate = 0.02
+        self.parameters.adaptiveThreshWinSizeMin = 3
+        self.parameters.adaptiveThreshWinSizeMax = 23
         
         for c_name, c_img in contrast_imgs:
             corners, ids, rejected = self.detector.detectMarkers(c_img)
