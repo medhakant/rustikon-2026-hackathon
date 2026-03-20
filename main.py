@@ -32,6 +32,10 @@ class MainController:
         self.H2 = None
         self.heading_offset = 0.0
         
+        # Timing for pulsed control
+        self.last_turn_time = 0.0
+        self.last_drive_time = 0.0
+        
         # Visualization
         self.viz = VisualizationServer()
         self.viz.start()
@@ -257,16 +261,34 @@ class MainController:
                 
                 err_heading = angle_diff(target_heading, heading)
                 
-                # Turn vs Drive state
-                if abs(err_heading) > math.radians(20):
-                    # Rotate in place (flip=True). Positive speed = Clockwise.
-                    # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
-                    turn_speed = -0.45 if err_heading > 0 else 0.45
-                    self.car.set_command(turn_speed, True)
+                # 4a. Rotation Pulse (Turn in place)
+                if abs(err_heading) > math.radians(25):
+                    # Settle time between turn pulses to avoid random spirals
+                    if t - self.last_turn_time > 1.2:
+                        # Rotating in place (flip=True). 
+                        # err_heading > 0 means target is CCW, so we want CCW rotation (speed < 0)
+                        turn_speed = -0.4 if err_heading > 0 else 0.4
+                        print(f"[Control] Pulsing Rotation: err={math.degrees(err_heading):.1f}°")
+                        self.car.set_command(turn_speed, True)
+                        time.sleep(0.12) # Short pulse
+                        self.car.stop_car()
+                        self.last_turn_time = time.time()
+                    else:
+                        # Wait for car to settle and vision to stabilize
+                        self.car.stop_car()
                 else:
-                    # Heading aligned, drive forward
-                    drive_speed = min(0.4 + 0.5 * dist, 1.0)
-                    self.car.set_command(drive_speed, False)
+                    # 4b. Driving Pulse (Forward)
+                    if t - self.last_drive_time > 0.8:
+                        # Heading aligned, drive forward in short pulses for precision
+                        drive_speed = min(0.4 + 0.4 * dist, 0.7)
+                        pulse_dur = 0.2 if dist > 0.4 else 0.1
+                        print(f"[Control] Pulsing Forward: dist={dist:.2f}m")
+                        self.car.set_command(drive_speed, False)
+                        time.sleep(pulse_dur)
+                        self.car.stop_car()
+                        self.last_drive_time = time.time()
+                    else:
+                        self.car.stop_car()
                         
             time.sleep(0.05) 
 
