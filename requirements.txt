@@ -2,3 +2,5 @@ opencv-python
 opencv-contrib-python
 requests
 numpy
+flask
+flask-cors

@@ -153,3 +153,50 @@ class VisionSystem:
         avg_heading = np.arctan2(y_dir, x_dir)
         
         return np.array([avg_x, avg_y]), avg_heading
+
+    def draw_visuals(self, image, detected_markers, H=None, car_pose=None):
+        """
+        Overlays visualization on the image.
+        """
+        vis_img = image.copy()
+        
+        # 1. Draw all detected markers
+        for marker_id, m in detected_markers.items():
+            pts = m["corners"].astype(np.int32)
+            cv2.polylines(vis_img, [pts], True, (0, 255, 0), 2)
+            
+            # Label with ID
+            cv2.putText(vis_img, str(marker_id), tuple(pts[0]), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            
+            # Draw heading arrow for each marker
+            center = m["center"].astype(np.int32)
+            forward_pt = center + (np.array([np.cos(m["heading"]), np.sin(m["heading"])]) * 40).astype(np.int32)
+            cv2.arrowedLine(vis_img, tuple(center), tuple(forward_pt), (255, 0, 0), 2)
+
+        # 2. Draw field boundary if Homography is available
+        if H is not None:
+            # Project the 4 corners of the [0,1]x[0,1] field back to image
+            invH = np.linalg.inv(H)
+            field_corners = np.array([
+                [0, 0], [1, 0], [1, 1], [0, 1]
+            ], dtype=np.float32).reshape(-1, 1, 2)
+            
+            field_pts_img = cv2.perspectiveTransform(field_corners, invH)
+            field_pts_img = field_pts_img.reshape(-1, 2).astype(np.int32)
+            cv2.polylines(vis_img, [field_pts_img], True, (255, 255, 0), 2)
+            
+            # Mark the corners with labels
+            labels = ["TL (0,0)", "TR (1,0)", "BR (1,1)", "BL (0,1)"]
+            for pt, label in zip(field_pts_img, labels):
+                cv2.putText(vis_img, label, tuple(pt), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+        # 3. Highlight car if pose is provided
+        if car_pose is not None:
+            pos, heading = car_pose
+            # Car pose is in normalized coordinates, need to project back to image if we want to show it on the RAW frame
+            # However, it's often more useful to show where the vision system THINKS the car is.
+            pass
+
+        return vis_img
