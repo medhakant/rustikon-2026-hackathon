@@ -17,3 +17,7 @@ Thumbs.db
 
 # Hackathon local data (if any)
 !data/.gitkeep
+
+# Rust
+target/
+**/*.rs.bk
